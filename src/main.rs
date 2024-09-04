@@ -2,15 +2,17 @@ mod audio_modifiers;
 mod realtime_playback;
 
 use crate::realtime_playback::playback;
+use log::info;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
-use tracing::info;
 
 static AUDIO_DATA: LazyLock<Arc<Mutex<Vec<f32>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
 
 fn main() {
+    env_logger::init();
+
     let _ = thread::spawn(move || {
         let _ = playback(Arc::clone(&AUDIO_DATA));
     });
