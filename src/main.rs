@@ -1,72 +1,162 @@
+mod audio_modifiers;
+mod models;
+mod realtime_playback;
+
+use crate::models::AudioDataThread;
+use crate::realtime_playback::playback;
+use axum::{routing::get, Router};
+use rustfft::num_traits::real::Real;
+use serde_json::Value;
+use socketioxide::{
+    extract::{AckSender, Bin, Data, SocketRef},
+    SocketIo,
+};
+use std::error::Error;
+use std::fs::File;
+use std::io::BufReader;
+use std::sync::mpsc::Receiver;
+use std::sync::{mpsc, Arc, Mutex};
+use std::{thread, time};
+use tokio::net::TcpListener;
+use tower_http::cors::{Any, CorsLayer};
+use tracing::info;
+use tracing_subscriber::FmtSubscriber;
+
+use crate::audio_modifiers::deepen_voice;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, StreamConfig};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Sender;
 
-fn main() {
-    let host = cpal::default_host();
-    let input_device: Device = host
-        .default_input_device()
-        .expect("Failed to get default input device");
-    let output_device: Device = host
-        .default_output_device()
-        .expect("Failed to get default output device");
+fn on_connect(
+    socket: SocketRef,
+    Data(data): Data<Value>,
+    receiver: Arc<Mutex<Receiver<AudioDataThread>>>,
+) {
+    info!("Socket.IO connected: {:?} {:?}", socket.ns(), socket.id);
+    socket.emit("auth", data).ok();
 
-    println!("{:?}", &input_device.name().unwrap());
-    println!("{:?}", &output_device.name().unwrap());
+    let file = File::open("testData.json").expect("Could not open file");
+    let reader = BufReader::new(file);
 
-    let input_config: StreamConfig = input_device
-        .default_input_config()
-        .expect("Failed to get default input format")
-        .config();
-    let output_config: StreamConfig = output_device
-        .default_output_config()
-        .expect("Failed to get default output format")
-        .config();
+    let test_data: Vec<f64> = serde_json::from_reader(reader).expect("could not parse ");
 
-    println!("{:?}", &input_config);
-    println!("{:?}", &output_config);
+    socket.on(
+        "message",
+        |socket: SocketRef, Data::<Value>(data), Bin(bin)| {
+            info!("Received event: {:?} {:?}", data, bin);
+            socket.bin(bin).emit("message-back", data).ok();
+        },
+    );
 
-    let shared_data = Arc::new(Mutex::new(Vec::new()));
+    socket.on(
+        "sendTestData",
+        move |socket: SocketRef, Data::<Value>(data), Bin(bin)| {
+            info!("Received event: {:?} {:?}", data, bin);
 
-    let input_data = Arc::clone(&shared_data);
-    let input_stream = input_device
-        .build_input_stream(
-            &input_config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let mut input_data = input_data.lock().unwrap();
-                input_data.clear();
-                input_data.extend_from_slice(data);
-            },
-            move |err| {
-                eprintln!("Error occurred on input stream: {}", err);
-            },
-        )
-        .expect("Failed to build input stream");
+            socket
+                .bin(bin)
+                .emit("testData", serde_json::json!({"data": test_data.clone()}))
+                .ok();
+            info!("Sent Data")
+        },
+    );
 
-    let volume = 5f32;
-    let sample_size = output_config.sample_rate.0 as usize / 50;
-    let output_data = Arc::clone(&shared_data);
-    let output_stream = output_device
-        .build_output_stream(
-            &output_config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let input_data = output_data.lock().unwrap();
-                for (i, out_sample) in data.iter_mut().enumerate() {
-                    // if i <= (sample_size) {
-                        let in_sample = input_data.get(i).cloned().unwrap_or(0.0);
+    socket.on("mic", move |socket: SocketRef, Data::<Value>(data)| {
+        info!("Received event MIC: {:?}", data);
+        for received in receiver.lock().unwrap().iter() {
+            println!("Received");
+            // socket
+            //     .emit("testData", serde_json::json!({"data": vec![1, 3, 56,3, 9]}))
+            //     .ok();
+        }
+    });
+}
 
-                        *out_sample = in_sample * volume;
-                    // }
-                }
-            },
-            move |err| {
-                eprintln!("Error occurred on output stream: {}", err);
-            },
-        )
-        .expect("Failed to build output stream");
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (data_to_socket_sender, data_to_socket_receiver) = mpsc::channel::<AudioDataThread>();
+    let data_to_socket_receiver = Arc::new(Mutex::new(data_to_socket_receiver));
 
-    input_stream.play().expect("Failed to play input stream");
-    output_stream.play().expect("Failed to play output stream");
+    let audio_data = Arc::new(Mutex::new(Vec::new()));
+    // let _ = playback(&audio_data);
+    thread::spawn(move || {
+        let _ = playback(&audio_data);
+    }).join().expect("TODO: panic message");
 
-    loop {}
+    // tracing::subscriber::set_global_default(FmtSubscriber::default()).expect("asdfasdf");
+    //
+    // let (layer, io) = SocketIo::new_layer();
+    //
+    // io.ns("/", move |socket: SocketRef, Data(data): Data<Value>| {
+    //     // on_connect(socket, data, Arc::clone(&data_to_socket_receiver))
+    //
+    //     info!("Socket.IO connected: {:?} {:?}", socket.ns(), socket.id);
+    //     socket.emit("auth", data).ok();
+    //
+    //     let file = File::open("testData.json").expect("Could not open file");
+    //     let reader = BufReader::new(file);
+    //
+    //     let test_data: Vec<f64> = serde_json::from_reader(reader).expect("could not parse ");
+    //
+    //     socket.on(
+    //         "message",
+    //         |socket: SocketRef, Data::<Value>(data), Bin(bin)| {
+    //             info!("Received event: {:?} {:?}", data, bin);
+    //             socket.bin(bin).emit("message-back", data).ok();
+    //         },
+    //     );
+    //
+    //     socket.on(
+    //         "sendTestData",
+    //         move |socket: SocketRef, Data::<Value>(data), Bin(bin)| {
+    //             info!("Received event: {:?} {:?}", data, bin);
+    //
+    //             socket
+    //                 .emit("testData", serde_json::json!({"data": test_data.clone()}))
+    //                 .ok();
+    //             info!("Sent Data")
+    //         },
+    //     );
+    //
+    //     socket.on(
+    //         "mic",
+    //         move |socket: SocketRef, Data::<Value>(data), Bin(bin)| {
+    //             info!("Received event MIC: {:?}", data);
+    //
+    //             // let received_data = data_to_socket_receiver.lock().unwrap().recv().expect("something").data;
+    //             let received_data = audio_data.lock().unwrap().clone();
+    //
+    //             socket
+    //                 .emit("testData", serde_json::json!({"data": received_data}))
+    //                 .expect("TODO: panic message");
+    //             for i in (0..5) {
+    //                 let asdf = socket.emit(
+    //                     "testData",
+    //                     serde_json::json!({"data": vec![i, i/2, i*2, i, i+10, i]}),
+    //                 ).ok();
+    //                 println!("{:?}", &asdf);
+    //                 thread::sleep(std::time::Duration::from_millis(2000));
+    //             }
+    //
+    //
+    //             // for received in data_to_socket_receiver.lock().unwrap().iter() {
+    //             //     socket
+    //             //         .bin(vec![vec![]])
+    //             //         .emit("testData", serde_json::json!({"data": received.data.clone()}))
+    //             //         .ok();
+    //             // }
+    //         },
+    //     );
+    // });
+    //
+    // let cors = CorsLayer::new().allow_origin(Any);
+    //
+    // let app = axum::Router::new().layer(layer).layer(cors);
+    //
+    // info!("Starting server");
+    //
+    // let listener = tokio::net::TcpListener::bind("0.0.0.0:8008").await.unwrap();
+    // axum::serve(listener, app).await.unwrap();
+
+    Ok(())
 }
