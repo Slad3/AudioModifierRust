@@ -3,7 +3,7 @@ use crate::audio_modifiers::low_pass_filter;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, StreamConfig};
 
-use log::info;
+use tracing::info;
 use std::sync::{Arc, Mutex};
 
 pub(crate) fn playback(audio_static: Arc<Mutex<Vec<f32>>>) {

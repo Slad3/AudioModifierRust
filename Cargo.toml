@@ -8,4 +8,4 @@ cpal = "0.13"
 dasp = { version = "0.11.0", features = ["signal"] }
 portaudio = "0.7.0"
 rustfft = "6.2.0"
-log = "0.4.22"
+tracing = "0.1.40"

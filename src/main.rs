@@ -5,6 +5,7 @@ use crate::realtime_playback::playback;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
+use tracing::info;
 
 static AUDIO_DATA: LazyLock<Arc<Mutex<Vec<f32>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
@@ -19,7 +20,7 @@ fn main() {
         let audio = AUDIO_DATA.lock().unwrap().clone();
         match audio.get(600) {
             Some(value) => {
-                println!("{}", value);
+                info!("{}", value);
             }
             None => {}
         }
