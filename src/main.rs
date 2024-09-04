@@ -1,72 +1,28 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, StreamConfig};
-use std::sync::{Arc, Mutex};
+mod audio_modifiers;
+mod realtime_playback;
+
+use crate::realtime_playback::playback;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::thread;
+use std::time::Duration;
+
+static AUDIO_DATA: LazyLock<Arc<Mutex<Vec<f32>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
 
 fn main() {
-    let host = cpal::default_host();
-    let input_device: Device = host
-        .default_input_device()
-        .expect("Failed to get default input device");
-    let output_device: Device = host
-        .default_output_device()
-        .expect("Failed to get default output device");
+    let _ = thread::spawn(move || {
+        let _ = playback(Arc::clone(&AUDIO_DATA));
+    });
 
-    println!("{:?}", &input_device.name().unwrap());
-    println!("{:?}", &output_device.name().unwrap());
+    loop {
+        thread::sleep(Duration::from_millis(1));
+        let audio = AUDIO_DATA.lock().unwrap().clone();
+        match audio.get(600) {
+            Some(value) => {
+                println!("{}", value);
+            }
+            None => {}
+        }
+    }
 
-    let input_config: StreamConfig = input_device
-        .default_input_config()
-        .expect("Failed to get default input format")
-        .config();
-    let output_config: StreamConfig = output_device
-        .default_output_config()
-        .expect("Failed to get default output format")
-        .config();
-
-    println!("{:?}", &input_config);
-    println!("{:?}", &output_config);
-
-    let shared_data = Arc::new(Mutex::new(Vec::new()));
-
-    let input_data = Arc::clone(&shared_data);
-    let input_stream = input_device
-        .build_input_stream(
-            &input_config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let mut input_data = input_data.lock().unwrap();
-                input_data.clear();
-                input_data.extend_from_slice(data);
-            },
-            move |err| {
-                eprintln!("Error occurred on input stream: {}", err);
-            },
-        )
-        .expect("Failed to build input stream");
-
-    let volume = 5f32;
-    let sample_size = output_config.sample_rate.0 as usize / 50;
-    let output_data = Arc::clone(&shared_data);
-    let output_stream = output_device
-        .build_output_stream(
-            &output_config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let input_data = output_data.lock().unwrap();
-                for (i, out_sample) in data.iter_mut().enumerate() {
-                    // if i <= (sample_size) {
-                        let in_sample = input_data.get(i).cloned().unwrap_or(0.0);
-
-                        *out_sample = in_sample * volume;
-                    // }
-                }
-            },
-            move |err| {
-                eprintln!("Error occurred on output stream: {}", err);
-            },
-        )
-        .expect("Failed to build output stream");
-
-    input_stream.play().expect("Failed to play input stream");
-    output_stream.play().expect("Failed to play output stream");
-
-    loop {}
 }
