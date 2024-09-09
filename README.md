@@ -1,5 +1,5 @@
 # Audio Modifier Rust (Project Jason)
-A simple realtime audio modifier program for me to play with audio modifications at low level processing.
+A simple instant playback audio modification program for me to play around with and experiment with audio modification.
 
 Feel free to clone and play around, maybe even create and add your own modifiers.
 
